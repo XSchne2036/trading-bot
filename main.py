@@ -7,37 +7,40 @@ import pystray
 from PIL import Image
 import threading
 
-
 # --- Tray-Icon-Funktionen ---
-def minimize_to_tray(window, icon_holder):
+def minimize_to_tray(window):
     """
     Minimiert das Fenster in das System-Tray.
     """
     window.withdraw()  # Fenster verstecken
 
-    def restore():
-        """
-        Funktion zum Wiederherstellen des Fensters.
-        """
-        window.deiconify()  # Fenster wiederherstellen
-        icon_holder['icon'].stop()  # Tray-Icon beenden
+def restore_window(icon, window):
+    """
+    Stellt das Fenster aus dem System-Tray wieder her.
+    """
+    icon.stop()  # Tray-Icon beenden
+    window.deiconify()  # Fenster wiederherstellen
 
+def create_tray_icon(window):
+    """
+    Erstellt ein Tray-Icon mit einem Menü.
+    """
     # Bild für das Tray-Icon (verwendet das konvertierte PNG)
     try:
-        image = Image.open("trading_bot_logo.png")  # Pfad zum Icon-Bild
+        image = Image.open("icon.png")  # Pfad zum Icon-Bild
     except FileNotFoundError:
-        logging.warning("Icon-Bild nicht gefunden. Verwende Standard-Icon.")
+        print("Icon-Bild nicht gefunden. Verwende Standard-Icon.")
         image = Image.new('RGB', (64, 64), color='gray')  # Fallback: einfaches graues Icon
 
     # Tray-Icon erstellen
     menu = pystray.Menu(
-        pystray.MenuItem("Fenster wiederherstellen", lambda: restore()),
+        pystray.MenuItem("Fenster wiederherstellen", lambda: restore_window(icon, window)),
         pystray.MenuItem("Beenden", lambda: sys.exit())
     )
     icon = pystray.Icon("kraken_bot", image, "Kraken Bot", menu)
-    icon_holder['icon'] = icon  # Tray-Icon im Holder speichern
-    threading.Thread(target=icon.run, daemon=True).start()
 
+    # Tray-Icon starten
+    icon.run()
 
 # --- Hauptfunktion ---
 def main():
@@ -62,27 +65,25 @@ def main():
 
         # Initialisiere das Hauptfenster der Anwendung
         root = tk.Tk()
-        root.title("Kraken Bot")
-        root.geometry("800x600")  # Beispielgröße des Fensters
 
         # Minimieren-Button (typischer Punkt-Button wie bei Winamp)
-        minimize_button = tk.Button(root, text="·", command=lambda: minimize_to_tray(root, icon_holder), width=2)
+        minimize_button = tk.Button(root, text="·", command=lambda: minimize_to_tray(root), width=2)
         minimize_button.place(relx=1.0, x=-10, y=10, anchor="ne")  # Position oben rechts
 
         # Erstelle eine Instanz der KrakenBotGUI und übergebe die API-Schlüssel
         app = KrakenBotGUI(root, api_key, api_secret)
 
-        # Icon-Holder für Tray-Icon
-        icon_holder = {}
+        # Tray-Icon erstellen
+        tray_thread = threading.Thread(target=create_tray_icon, args=(root,), daemon=True)
+        tray_thread.start()
 
         # Starte die Hauptereignisschleife
         logging.info("GUI initialized. Starting main loop...")
         root.mainloop()
 
     except Exception as e:
-        logging.error(f"An error occurred: {e}", exc_info=True)
+        logging.error(f"An error occurred: {e}")
         print(f"An error occurred: {e}")
-
 
 if __name__ == '__main__':
     main()

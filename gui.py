@@ -2,6 +2,9 @@
 from tkinter import ttk, messagebox, simpledialog, filedialog
 import json
 import logging
+import sys
+import pystray
+from PIL import Image
 from api_client import KrakenAPIClient
 from models.portfolio import Portfolio
 from models.favorites import Favorites
@@ -63,18 +66,23 @@ class KrakenBotGUI:
         # Buttons
         self.update_button = ttk.Button(self.frame, text="Refresh", command=self.update_balance)
         self.update_button.grid(row=3, column=0, sticky=tk.W)
+        self.create_tooltip(self.update_button, "Aktualisiert den Kontostand und die Portfolio-Daten.")
 
         self.export_button = ttk.Button(self.frame, text="Export Portfolio", command=self.export_portfolio)
         self.export_button.grid(row=3, column=1, sticky=tk.W)
+        self.create_tooltip(self.export_button, "Exportiert das Portfolio in eine CSV-Datei.")
 
         self.favorites_button = ttk.Button(self.frame, text="Manage Favorites", command=self.open_favorites_window)
         self.favorites_button.grid(row=3, column=2, sticky=tk.W)
+        self.create_tooltip(self.favorites_button, "Öffnet ein Fenster zur Verwaltung der Favoriten.")
 
         self.trade_button = ttk.Button(self.frame, text="Execute Trade", command=self.open_trade_window)
         self.trade_button.grid(row=3, column=3, sticky=tk.E)
+        self.create_tooltip(self.trade_button, "Öffnet ein Fenster zur Ausführung eines Trades.")
 
-        self.quit_button = ttk.Button(self.frame, text="Quit", command=root.quit)
+        self.quit_button = ttk.Button(self.frame, text="Quit", command=self.minimize_to_tray)
         self.quit_button.grid(row=4, column=3, sticky=tk.E)
+        self.create_tooltip(self.quit_button, "Minimiert das Fenster in das System-Tray.")
 
         # Console output
         self.console_output = tk.Text(self.frame, height=10, wrap=tk.WORD)
@@ -88,6 +96,76 @@ class KrakenBotGUI:
         # Start auto-update
         self.update_balance()
         self.auto_update()
+
+        # Tray Icon
+        self.create_tray_icon()
+
+    def create_tooltip(self, widget, text):
+        """
+        Erstellt einen Tooltip für ein Widget.
+
+        :param widget: Das Widget, für das der Tooltip erstellt wird.
+        :param text: Der Text des Tooltips.
+        """
+        tooltip = tk.Toplevel(self.root)
+        tooltip.wm_overrideredirect(True)
+        tooltip.wm_geometry("+0+0")
+        tooltip.withdraw()
+
+        label = ttk.Label(tooltip, text=text, background="lightyellow", padding=5)
+        label.pack()
+
+        def enter(event):
+            x, y, _, _ = widget.bbox("insert")
+            x += widget.winfo_rootx() + 25
+            y += widget.winfo_rooty() + 25
+            tooltip.wm_geometry(f"+{x}+{y}")
+            tooltip.deiconify()
+
+        def leave(event):
+            tooltip.withdraw()
+
+        widget.bind("<Enter>", enter)
+        widget.bind("<Leave>", leave)
+
+    def create_tray_icon(self):
+        """
+        Erstellt ein Tray-Icon mit einem Menü.
+        """
+        # Bild für das Tray-Icon (verwendet das konvertierte PNG)
+        try:
+            image = Image.open("icon.png")  # Pfad zum Icon-Bild
+        except FileNotFoundError:
+            print("Icon-Bild nicht gefunden. Verwende Standard-Icon.")
+            image = Image.new('RGB', (64, 64), color='gray')  # Fallback: einfaches graues Icon
+
+        # Tray-Icon erstellen
+        menu = pystray.Menu(
+            pystray.MenuItem("Fenster wiederherstellen", self.restore_window),
+            pystray.MenuItem("Beenden", self.quit_app)
+        )
+        self.icon = pystray.Icon("kraken_bot", image, "Kraken Bot", menu)
+
+    def minimize_to_tray(self):
+        """
+        Minimiert das Fenster in das System-Tray.
+        """
+        self.root.withdraw()  # Fenster verstecken
+        self.icon.run()  # Tray-Icon starten
+
+    def restore_window(self, icon=None, item=None):
+        """
+        Stellt das Fenster aus dem System-Tray wieder her.
+        """
+        self.icon.stop()  # Tray-Icon beenden
+        self.root.deiconify()  # Fenster wiederherstellen
+
+    def quit_app(self, icon=None, item=None):
+        """
+        Beendet die Anwendung.
+        """
+        self.icon.stop()  # Tray-Icon beenden
+        self.root.quit()  # Anwendung beenden
 
     def create_menu_bar(self):
         """
