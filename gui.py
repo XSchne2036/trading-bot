@@ -10,6 +10,7 @@ from models import *
 from utils import TextWidgetHandler
 import csv
 from datetime import datetime
+import time  # Importiere das time-Modul für Verzögerungen
 
 class KrakenBotGUI:
     def __init__(self, root, api_key: str, api_secret: str):
@@ -52,12 +53,12 @@ class KrakenBotGUI:
 
         # Treeview for portfolio
         self.tree = ttk.Treeview(self.frame, columns=("pair", "available", "market_price", "buy_price", "current_value", "deviation"), show='headings')
-        self.tree.heading("pair", text="Pair")
-        self.tree.heading("available", text="Available")
-        self.tree.heading("market_price", text="Market Price (EUR)")
-        self.tree.heading("buy_price", text="Buy Price (EUR)")
-        self.tree.heading("current_value", text="Current Value (EUR)")
-        self.tree.heading("deviation", text="Deviation (%)")
+        self.tree.heading("pair", text="Pair", command=lambda: self.sort_treeview(self.tree, "pair", False))
+        self.tree.heading("available", text="Available", command=lambda: self.sort_treeview(self.tree, "available", False))
+        self.tree.heading("market_price", text="Market Price (EUR)", command=lambda: self.sort_treeview(self.tree, "market_price", False))
+        self.tree.heading("buy_price", text="Buy Price (EUR)", command=lambda: self.sort_treeview(self.tree, "buy_price", False))
+        self.tree.heading("current_value", text="Current Value (EUR)", command=lambda: self.sort_treeview(self.tree, "current_value", False))
+        self.tree.heading("deviation", text="Deviation (%)", command=lambda: self.sort_treeview(self.tree, "deviation", False))
         self.tree.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # Scrollbars
@@ -131,48 +132,93 @@ class KrakenBotGUI:
         scroll_x.pack(side="bottom", fill="x")
         self.trades_tree.configure(xscrollcommand=scroll_x.set)
 
+    def sort_treeview(self, tree, col, reverse):
+        """
+        Sortiert die Treeview nach der angegebenen Spalte.
+
+        :param tree: Die Treeview-Komponente.
+        :param col: Die Spalte, nach der sortiert werden soll.
+        :param reverse: Gibt an, ob die Sortierung umgekehrt werden soll.
+        """
+        data = [(tree.set(item, col), item) for item in tree.get_children("")]
+        data.sort(reverse=reverse)
+
+        for index, (_, item) in enumerate(data):
+            tree.move(item, "", index)
+
+        # Setze den Sortierindikator in der Spaltenüberschrift
+        tree.heading(col, command=lambda: self.sort_treeview(tree, col, not reverse))
+
     def fetch_and_display_trades(self):
         """
         Ruft die Handelshistorie ab und zeigt sie in einer Tabelle an.
         """
         try:
+            logging.info("Lade Handelshistorie...")
+
             # Handelshistorie für alle Paare abrufen
-            trades_history = self.api_client.get_trades_history()
+            trades_history = None
+            retries = 3  # Anzahl der Wiederholungsversuche
+            delay = 15  # Verzögerung in Sekunden zwischen den Versuchen
+            time.sleep(delay)  # Warte vor dem nächsten Versuch
+            for attempt in range(retries):
+                try:
+                    trades_history = self.api_client.get_trades_history()
+                    if trades_history:
+                        break  # Erfolg, breche die Schleife ab
+                    else:
+                        logging.warning(f"Keine Handelshistorie gefunden. Versuch {attempt + 1} von {retries}.")
+                except Exception as e:
+                    if "EAPI:Rate limit exceeded" in str(e):
+                        logging.warning(f"Rate-Limit überschritten. Versuch {attempt + 1} von {retries}. Warte {delay} Sekunden...")
+                        time.sleep(delay)  # Warte vor dem nächsten Versuch
+                    else:
+                        logging.error(f"Fehler beim Abrufen der Handelshistorie: {e}")
+                        raise e  # Wirf den Fehler erneut, wenn es sich nicht um einen Rate-Limit-Fehler handelt
+
+            if not trades_history:
+                logging.warning("Keine Handelshistorie gefunden.")
+                return
 
             # Lösche alle vorhandenen Einträge in der Tabelle
             for row in self.trades_tree.get_children():
                 self.trades_tree.delete(row)
 
-            if trades_history:
-                # Füge die Handelsdaten in die Tabelle ein
-                for trade in trades_history:
-                    # Extrahiere die Handelsdaten
-                    pair = trade.get('pair', 'N/A')
-                    trade_type = trade.get('type', 'N/A')
-                    price = trade.get('price', 'N/A')
-                    volume = trade.get('vol', 'N/A')
-                    time_str = trade.get('time', 'N/A')
+            # Füge die Handelsdaten in die Tabelle ein
+            for trade in trades_history:
+                # Extrahiere die Handelsdaten
+                pair = trade.get('pair', 'N/A')
+                trade_type = trade.get('type', 'N/A')
+                price = trade.get('price', 'N/A')
+                volume = trade.get('vol', 'N/A')
+                time_str = trade.get('time', 'N/A')
 
-                    # Konvertiere den Zeitstempel in das deutsche Datumsformat
-                    if time_str != 'N/A':
+                # Konvertiere den Zeitstempel in das deutsche Datumsformat
+                if time_str != 'N/A':
+                    try:
                         time_str = datetime.fromtimestamp(float(time_str)).strftime("%d.%m.%Y %H:%M:%S")
+                    except Exception as e:
+                        logging.error(f"Fehler beim Konvertieren des Zeitstempels: {e}")
+                        time_str = 'N/A'
 
-                    # Füge die Daten in die Tabelle ein
-                    self.trades_tree.insert("", "end", values=(pair, trade_type.upper(), price, volume, time_str))
+                # Füge die Daten in die Tabelle ein
+                self.trades_tree.insert("", "end", values=(pair, trade_type.upper(), price, volume, time_str))
 
-                # Farbliche Hervorhebung basierend auf dem Handels-Typ (Buy/Sell)
-                for row in self.trades_tree.get_children():
-                    trade_type = self.trades_tree.item(row, 'values')[1]
-                    if trade_type == 'BUY':
-                        self.trades_tree.tag_configure("buy", background="lightgreen")
-                        self.trades_tree.item(row, tags=("buy",))
-                    elif trade_type == 'SELL':
-                        self.trades_tree.tag_configure("sell", background="lightcoral")
-                        self.trades_tree.item(row, tags=("sell",))
-            else:
-                logging.info("Keine Trades gefunden.")
+            # Farbliche Hervorhebung basierend auf dem Handels-Typ (Buy/Sell)
+            for row in self.trades_tree.get_children():
+                trade_type = self.trades_tree.item(row, 'values')[1]
+                if trade_type == 'BUY':
+                    self.trades_tree.tag_configure("buy", background="lightgreen")
+                    self.trades_tree.item(row, tags=("buy",))
+                elif trade_type == 'SELL':
+                    self.trades_tree.tag_configure("sell", background="lightcoral")
+                    self.trades_tree.item(row, tags=("sell",))
+
+            logging.info("Handelshistorie erfolgreich geladen und angezeigt.")
+
         except Exception as e:
             logging.error(f"Fehler beim Abrufen der Handelshistorie: {e}")
+            messagebox.showerror("Fehler", f"Fehler beim Laden der Handelshistorie: {e}")
 
     def create_tooltip(self, widget, text):
         """
@@ -444,17 +490,27 @@ class KrakenBotGUI:
                     self.fetch_and_display_trades()
             self.last_balance = balance  # Speichere den aktuellen Kontostand
 
-            # Aktualisiere die Tabelle
+            # Lösche alle vorhandenen Einträge in der Tabelle
             for item in self.tree.get_children():
                 self.tree.delete(item)
+
+            # Sammle die Daten in einer Liste
+            data = []
             for base_currency, available in balance.items():
                 pair = f"{base_currency}EUR"
                 if pair in favorites and available > 0:
                     market_price = self.api_client.get_market_price(pair)
                     buy_price = self.api_client.get_buy_price(pair)
-                    current_value = round(market_price * available, 2) if market_price else "N/A"
-                    deviation = ((market_price - buy_price) / buy_price) * 100 if market_price and buy_price else "N/A"
-                    self.tree.insert("", "end", values=(pair, available, market_price, buy_price, current_value, deviation))
+                    current_value = round(market_price * available, 2) if market_price else 0
+                    deviation = ((market_price - buy_price) / buy_price) * 100 if market_price and buy_price else 0
+                    data.append((pair, available, market_price, buy_price, current_value, deviation))
+
+            # Sortiere die Daten nach dem aktuellen Wert absteigend
+            data.sort(key=lambda x: x[4], reverse=True)
+
+            # Füge die sortierten Daten in die Tabelle ein
+            for row in data:
+                self.tree.insert("", "end", values=row)
 
             # Speichere das Portfolio nach der Aktualisierung
             self.portfolio.portfolio = balance
