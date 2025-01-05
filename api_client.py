@@ -15,46 +15,32 @@ class KrakenAPIClient:
 
     def check_balance(self, favorites: List[str]) -> Dict[str, float]:
         """
-        Ruft den Kontostand für die angegebenen Favoriten-Paare ab, inklusive Funding Wallet.
-
-        :param favorites: Eine Liste von Favoriten-Paaren (z. B. ['ADAEUR', 'CQTEUR']).
-        :return: Ein Dictionary mit den verfügbaren Beträgen für die Favoriten-Paare.
+        Ruft den Kontostand für die angegebenen Favoriten-Paare ab und fügt Spot- und Funding-Wallet zusammen.
         """
         try:
             logging.info("Fetching balance...")
             balance = self.api.query_private('Balance')
             logging.info(f"Balance response: {balance}")
 
-            # Füge das Funding Wallet hinzu
-            funding_balance = self.api.query_private('TradeBalance', {'asset': 'ZEUR'})
-            logging.info(f"Funding balance response: {funding_balance}")
-
             valid_balance = {}
             if 'result' in balance:
                 for asset, amount in balance['result'].items():
-                    pair = f"{asset}EUR"
+                    # Erkenne Basis-Asset (entferne .F-Suffix, falls vorhanden)
+                    base_asset = asset.replace('.F', '')
+                    pair = f"{base_asset}EUR"  # Erstelle das Paar für die Favoritenprüfung
+
+                    # Prüfe, ob das Basis-Asset in den Favoriten enthalten ist
                     if pair in favorites:
                         try:
                             amount_float = float(amount)
-                            if amount_float >= 0.0001:
-                                valid_balance[asset] = amount_float
+                            if amount_float > 0:  # Zeige alle Werte größer als 0 an
+                                # Füge den Wert zum Basis-Asset hinzu
+                                valid_balance[base_asset] = valid_balance.get(base_asset, 0) + amount_float
+                                logging.info(f"Added {base_asset} (from {asset}) to valid balance: {amount_float}")
                         except ValueError:
                             logging.warning(f"Invalid value for {asset}: {amount}")
 
-            if 'result' in funding_balance:
-                for asset, amount in funding_balance['result'].items():
-                    if asset.endswith('.F'):  # Nur Funding-Wallet-Assets
-                        base_asset = asset.replace('.F', '')
-                        pair = f"{base_asset}EUR"
-                        if pair in favorites:
-                            try:
-                                amount_float = float(amount)
-                                if amount_float >= 0.0001:
-                                    valid_balance[base_asset] = valid_balance.get(base_asset, 0) + amount_float
-                            except ValueError:
-                                logging.warning(f"Invalid value for {asset}: {amount}")
-
-            logging.info(f"Valid balance: {valid_balance}")
+            logging.info(f"Valid balance with formatting: { {k: f'{v:.8f}' for k, v in valid_balance.items()} }")
             return valid_balance
         except Exception as e:
             logging.error(f"Error fetching balance: {e}")
