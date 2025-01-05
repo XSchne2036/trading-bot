@@ -15,7 +15,7 @@ class KrakenAPIClient:
 
     def check_balance(self, favorites: List[str]) -> Dict[str, float]:
         """
-        Ruft den Kontostand für die angegebenen Favoriten-Paare ab.
+        Ruft den Kontostand für die angegebenen Favoriten-Paare ab, inklusive Funding Wallet.
 
         :param favorites: Eine Liste von Favoriten-Paaren (z. B. ['ADAEUR', 'CQTEUR']).
         :return: Ein Dictionary mit den verfügbaren Beträgen für die Favoriten-Paare.
@@ -24,8 +24,13 @@ class KrakenAPIClient:
             logging.info("Fetching balance...")
             balance = self.api.query_private('Balance')
             logging.info(f"Balance response: {balance}")
+
+            # Füge das Funding Wallet hinzu
+            funding_balance = self.api.query_private('TradeBalance', {'asset': 'ZEUR'})
+            logging.info(f"Funding balance response: {funding_balance}")
+
+            valid_balance = {}
             if 'result' in balance:
-                valid_balance = {}
                 for asset, amount in balance['result'].items():
                     pair = f"{asset}EUR"
                     if pair in favorites:
@@ -35,10 +40,22 @@ class KrakenAPIClient:
                                 valid_balance[asset] = amount_float
                         except ValueError:
                             logging.warning(f"Invalid value for {asset}: {amount}")
-                logging.info(f"Valid balance: {valid_balance}")
-                return valid_balance
-            else:
-                logging.error(f"Error fetching balance: {balance}")
+
+            if 'result' in funding_balance:
+                for asset, amount in funding_balance['result'].items():
+                    if asset.endswith('.F'):  # Nur Funding-Wallet-Assets
+                        base_asset = asset.replace('.F', '')
+                        pair = f"{base_asset}EUR"
+                        if pair in favorites:
+                            try:
+                                amount_float = float(amount)
+                                if amount_float >= 0.0001:
+                                    valid_balance[base_asset] = valid_balance.get(base_asset, 0) + amount_float
+                            except ValueError:
+                                logging.warning(f"Invalid value for {asset}: {amount}")
+
+            logging.info(f"Valid balance: {valid_balance}")
+            return valid_balance
         except Exception as e:
             logging.error(f"Error fetching balance: {e}")
         return {}
@@ -91,13 +108,48 @@ class KrakenAPIClient:
             logging.error(f"Error fetching buy price for {pair}: {e}")
         return None
 
-    def execute_trade(self, pair: str, volume: float, side: str = 'buy') -> Optional[Dict]:
+    def get_trades_history(self, pair: Optional[str] = None) -> List[Dict]:
         """
-        Führt einen Trade für ein bestimmtes Paar aus.
+        Ruft die Handelshistorie ab und filtert optional nach einem spezifischen Handelspaar.
 
-        :param pair: Das HandelsPaar (z. B. 'CQTEUR').
+        :param pair: Das Handelspaar, nach dem gefiltert werden soll (z. B. 'CQTEUR').
+                    Wenn None, werden alle Trades zurückgegeben.
+        :return: Eine Liste von Trades für das angegebene Paar oder alle Trades.
+        """
+        try:
+            logging.info(f"Fetching trades history for {pair if pair else 'all pairs'}...")
+            response = self.api.query_private('TradesHistory')
+            if 'error' in response and response['error']:
+                logging.error(f"Error fetching trades history: {response['error']}")
+                return []
+            trades = response.get('result', {}).get('trades', {})
+            if not trades:
+                logging.warning("No trades found.")
+                return []
+            if pair:
+                # Filtere die Trades nach dem angegebenen Paar
+                filtered_trades = [
+                    trade_data for trade_data in trades.values()
+                    if trade_data.get('pair') == pair
+                ]
+                logging.info(f"Found {len(filtered_trades)} trades for {pair}.")
+                return filtered_trades
+            else:
+                # Gib alle Trades zurück, wenn kein Paar angegeben ist
+                logging.info(f"Found {len(trades)} trades.")
+                return list(trades.values())
+        except Exception as e:
+            logging.error(f"Error fetching trades history: {e}")
+        return []
+
+    def execute_trade(self, pair, volume, side, oflags='fcib'):
+        """
+        Führt einen Trade aus.
+
+        :param pair: Das Handelspaar (z. B. 'ADAEUR').
         :param volume: Das Handelsvolumen.
         :param side: Die Handelsseite ('buy' oder 'sell').
+        :param oflags: Optionale Flags (z. B. 'fcib,margin' für Margin-Trading).
         :return: Das Ergebnis des Trades oder None, falls ein Fehler auftritt.
         """
         try:
@@ -105,7 +157,8 @@ class KrakenAPIClient:
                 'pair': pair,
                 'type': side,
                 'ordertype': 'market',
-                'volume': str(volume)
+                'volume': str(volume),
+                'oflags': oflags
             })
             if 'result' in response:
                 logging.info(f"Trade executed: {response['result']}")

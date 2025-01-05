@@ -1,2 +1,5 @@
+tkinter
 krakenex
 pandas
+requests
+Pillow
