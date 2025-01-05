@@ -1,0 +1,9 @@
+﻿################################################################################
+# Diese .gitignore-Datei wurde von Microsoft(R) Visual Studio automatisch erstellt.
+################################################################################
+
+/kraken_bot.log
+/.vs
+/models/__pycache__
+/__pycache__
+/portfolio.json
